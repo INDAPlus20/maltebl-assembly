@@ -1,0 +1,12 @@
+[package]
+name = "maltebl-task-9"
+version = "0.1.0"
+authors = ["Malte Blomqvist <blomqvist.malte@telia.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "compiler"
+path = "src/compiler.rs"
+
+[dependencies]
