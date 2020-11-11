@@ -83,12 +83,10 @@ pub fn compile(code: String) -> Result<(), String> {
     Ok(())
 }
 
-fn first_pass<I: Iterator<Item = String>>(lines: &mut I) {
-    let mut pc = 0;
-    for mut line in lines {
-        pc += 1;
-        if let Some(word)
-    }
+fn parse_declarations<T: Iterator<Item = I>, I: Iterator<Item = String>>(
+    lines: &mut T,
+) -> Result<(), String> {
+    Err("Error processing declarations".to_string())
 }
 
 fn parse_line<I: Iterator<Item = String>>(mut line: I) -> Result<Option<u8>, String> {
