@@ -1,5 +1,6 @@
 #![allow(unused)]
-use std::str::SplitWhitespace;
+
+use std::iter::Peekable;
 
 const INSTRUCT_LEN: u8 = 8;
 const ADDR_LEN: u8 = 5;
@@ -54,14 +55,15 @@ const SYSCALL_DICTIONARY: [(char, u8); 3] = [
     ('🔪', SYSCALL::TERMINATE as u8),
 ];
 
-const CONSTANTS: char = '💭';
 const MACRO: char = '🔓';
 const END_MACRO: char = '🔒';
 const CODE: char = '💬';
 
-const SECTION: [char; 4] = [CONSTANTS, MACRO, END_MACRO, CODE];
+const SECTION: [char; 3] = [MACRO, END_MACRO, CODE];
 
 pub fn compile(code: String) -> Result<(), String> {
+    let (macros, code_start) = parse_macros(&code)?;
+    let code = insert_macros(code, macros)?;
     let mut code_lines = code.lines().map(|l| {
         l.split_whitespace()
             .take_while(|w| !w.starts_with('#'))
@@ -69,12 +71,12 @@ pub fn compile(code: String) -> Result<(), String> {
     });
 
     let mut executable: Vec<u8> = Vec::new();
+    let mut labels: Vec<(String, u32)> = Vec::new();
     let mut pc = 0;
-    let mut sign_table: Vec<(String, Vec<u8>)> = Vec::new();
     for mut line in code_lines {
         pc += 1;
-        if let Some(bits) =
-            parse_line(line).map_err(|err| err + format!(" at line {}", pc).as_str())?
+        if let Some(bits) = parse_line(line, &mut labels, pc)
+            .map_err(|err| err + format!(" at line {}", pc).as_str())?
         {
             println!("{:#010b}", bits);
             executable.push(bits);
@@ -83,17 +85,75 @@ pub fn compile(code: String) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_declarations<T: Iterator<Item = I>, I: Iterator<Item = String>>(
-    lines: &mut T,
-) -> Result<(), String> {
-    Err("Error processing declarations".to_string())
+fn parse_macros(code: &String) -> Result<(Vec<(String, String)>, u32), String> {
+    let code = code.lines();
+    let mut in_macro = false;
+    let mut macro_name = String::new();
+    let mut macr: String = String::new();
+    let mut macros: Vec<(String, String)> = Vec::new();
+    let mut pc: u32 = 0;
+    for mut line in code {
+        pc += 1;
+        if in_macro {
+            if line.contains(END_MACRO) {
+                macros.push((macro_name.clone(), macr));
+                macro_name = String::new();
+                macr = String::new();
+                in_macro = false;
+            } else {
+                macr += "\n";
+                macr += line;
+            }
+        } else if line.contains(MACRO) {
+            let mut line = line.split_whitespace();
+            line.next();
+            macro_name = line
+                .next()
+                .ok_or("Error parsing macro name".to_string())?
+                .to_string();
+            in_macro = true;
+        } else if line.contains(CODE) {
+            return Ok((macros, pc));
+        }
+    }
+    Err("Error parsing macros".to_string())
 }
 
-fn parse_line<I: Iterator<Item = String>>(mut line: I) -> Result<Option<u8>, String> {
+fn insert_macros(code: String, macros: Vec<(String, String)>) -> Result<String, String> {
+    let mut cod = String::new();
+    let mut code = code
+        .lines()
+        .skip_while(|w| !w.contains(CODE))
+        .map(|l| l.to_string());
+    code.next();
+    for mut line in &mut code {
+        for (name, macr) in &macros {
+            if line.contains(name.as_str()) {
+                let mut words = line.split_whitespace();
+                words.next();
+                let input = words
+                    .next()
+                    .ok_or("error parsing macro input".to_string())?;
+                let maca = macr.replace("_", input);
+                line = maca;
+            }
+        }
+        cod += (line + "\n").as_str();
+    }
+    Ok(cod)
+}
+
+fn parse_line<I: Iterator<Item = String>>(
+    mut line: I,
+    labels: &mut Vec<(String, u32)>,
+    pc: u32,
+) -> Result<Option<u8>, String> {
     let mut instruction: u8 = 0;
     if let Some(word) = line.next() {
         if word.ends_with(':') {
-            parse_label(word)?;
+            let word = word.replace(":", "");
+            labels.push((word, pc));
+            return Ok(None);
         } else {
             let op_code = parse_op(word)?;
             instruction += op_code;
@@ -102,7 +162,7 @@ fn parse_line<I: Iterator<Item = String>>(mut line: I) -> Result<Option<u8>, Str
             } else if op_code <= 160 {
                 instruction += parse_i(line)?;
             } else if op_code == 192 {
-                instruction += parse_jump(line)?;
+                instruction += parse_jump(line, labels, pc)?;
             } else {
                 instruction += parse_call(line)?;
             }
@@ -137,10 +197,6 @@ fn parse_reg(word: String) -> Result<u8, String> {
     Err("Error parsing registry".to_string())
 }
 
-fn parse_label(label: String) -> Result<(), String> {
-    todo!()
-}
-
 fn parse_r<I: Iterator<Item = String>>(mut line: I) -> Result<u8, String> {
     if let (Some(reg1), Some(reg2), Some(imm)) = (line.next(), line.next(), line.next()) {
         if let (Ok(mut reg1), Ok(mut reg2), Ok(imm)) =
@@ -166,9 +222,30 @@ fn parse_i<I: Iterator<Item = String>>(mut line: I) -> Result<u8, String> {
     Err("Error parsing i-type instruction".to_string())
 }
 
-fn parse_jump<I: Iterator<Item = String>>(mut line: I) -> Result<u8, String> {
+fn parse_jump<I: Iterator<Item = String>>(
+    mut line: I,
+    labels: &mut Vec<(String, u32)>,
+    pc: u32,
+) -> Result<u8, String> {
     if let Some(s_code) = line.next() {
-        todo!()
+        let mut amount: i32 = 0;
+        if let Ok(n) = s_code.parse() {
+            amount = n;
+        } else {
+            for (label, place) in labels {
+                if s_code == *label {
+                    amount = *place as i32;
+                    amount -= pc as i32;
+                }
+            }
+        }
+        if amount != 0 || amount > -16 || amount < 16 {
+            if amount < 0 {
+                return Ok((0b10000 + amount.abs()) as u8);
+            } else {
+                return Ok(amount as u8);
+            }
+        }
     }
     Err("Error parsing jump instruction".to_string())
 }
