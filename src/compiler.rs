@@ -4,13 +4,14 @@ use std::{fs, io::Write};
 pub fn compile(code: String, output_name: &str) -> Result<(), String> {
     let macros = parse_macros(&code)?;
     let code = insert_macros(code, macros)?;
+    let mut labels: Vec<(String, u32)> = Vec::new();
+    find_labels(&code, &mut labels);
     let code_lines = code.lines().map(|l| {
         l.split_whitespace()
             .take_while(|w| !w.starts_with('#'))
             .map(|w| w.to_string())
     });
     let mut executable: Vec<u8> = Vec::new();
-    let mut labels: Vec<(String, u32)> = Vec::new();
     let mut pc = 0;
     for line in code_lines {
         if let Some(bits) = parse_line(line, &mut labels, &mut pc)
@@ -82,13 +83,34 @@ fn insert_macros(code: String, macros: Vec<(String, String)>) -> Result<String, 
                 let input = words
                     .next()
                     .ok_or("error parsing macro input".to_string())?;
-                let maca = macr.replace("_", input);
+                let mut maca = macr.replace("_", input);
+                if maca.contains("¤") {
+                    let input2 = words
+                        .next()
+                        .ok_or("error parsing macro input".to_string())?;
+                    maca = maca.replace("¤", input2);
+                }
                 line = maca;
             }
         }
         cod += (line + "\n").as_str();
     }
     Ok(cod)
+}
+
+fn find_labels(code: &str, labels: &mut Vec<(String, u32)>) {
+    let mut code = code.lines().map(|l| l.to_string());
+    let mut pc = 0;
+    for line in &mut code {
+        if let Some(word) = line.split_whitespace().next() {
+            if word.ends_with(':') {
+                let word = word.replace(":", "");
+                labels.push((word, pc));
+            } else {
+                pc += 1;
+            }
+        }
+    }
 }
 
 fn parse_line<I: Iterator<Item = String>>(
@@ -99,9 +121,6 @@ fn parse_line<I: Iterator<Item = String>>(
     let mut instruction: u8 = 0;
     if let Some(word) = line.next() {
         if word.ends_with(':') {
-            let word = word.replace(":", "");
-            labels.push((word, *pc));
-
             return Ok(None);
         } else {
             let op_code = parse_op(word)?;

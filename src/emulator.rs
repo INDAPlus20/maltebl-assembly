@@ -8,14 +8,16 @@ Optimised for FOR ME 👉👈 programming language
 ********************************************************/
 
 use crate::language_specs::*;
-use std::fs;
+use std::{fs, io::BufRead, num::ParseIntError};
 
 pub fn execute(filepath: String) -> Result<(), String> {
     let mut regestries: [i32; 4] = [0; 4];
+    let stdin = std::io::stdin();
     let instructions = fs::read(filepath).map_err(|err| err.to_string())?;
     let mut pc = 0;
     while pc != instructions.len() {
         if let Some(current_inst) = instructions.get(pc) {
+            //println!("{}    {:#010b}", pc, current_inst);
             let op_code = get_op(current_inst);
             match op_code {
                 0 => {
@@ -63,7 +65,18 @@ pub fn execute(filepath: String) -> Result<(), String> {
                     let call_code = current_inst & 0b00011111;
                     match call_code {
                         0 => println!("{}", regestries[1]),
-                        1 => regestries[1] = 2,
+                        1 => {
+                            let input: i32 = stdin
+                                .lock()
+                                .lines()
+                                .next()
+                                .ok_or("Error finding input".to_string())?
+                                .map_err(|err| err.to_string())?
+                                .parse()
+                                .map_err(|er: ParseIntError| er.to_string())?;
+                            println!("Input recieved: {}", input);
+                            regestries[1] = input;
+                        }
                         2 => return Ok(()),
                         _ => return Err(format!("Error executing syscall at {}", pc)),
                     }
